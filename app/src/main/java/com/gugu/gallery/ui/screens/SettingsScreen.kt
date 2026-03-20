@@ -111,7 +111,7 @@ fun SettingsScreen(viewModel: GalleryViewModel = viewModel()) {
                     
                     FocusableButton(
                         onClick = { viewModel.startIndexing() },
-                        text = if (indexingState) "正在索引..." else "立即更新图库索引",
+                        text = if (indexingState) "同步中..." else "立即更新图库索引",
                         enabled = !indexingState,
                         modifier = Modifier.fillMaxWidth().height(60.dp)
                     )
@@ -199,9 +199,11 @@ fun SettingsScreen(viewModel: GalleryViewModel = viewModel()) {
                         if (!isManualEntry && editingServer != null) {
                             FocusableButton(
                                 onClick = {
-                                    val updatedServer = editingServer!!.copy(username = selectedUser, password = selectedPass)
-                                    viewModel.updateServer(updatedServer)
-                                    showAuthDialog = false
+                                    coroutineScope.launch { // Wrapped in coroutineScope.launch
+                                        val updatedServer = editingServer!!.copy(username = selectedUser, password = selectedPass)
+                                        viewModel.updateServer(updatedServer)
+                                        showAuthDialog = false
+                                    }
                                 },
                                 text = "保存凭据"
                             )
@@ -287,14 +289,16 @@ fun SettingsScreen(viewModel: GalleryViewModel = viewModel()) {
                     FocusableButton(onClick = { showFolderSelectionDialog = false }, text = "退出")
                     FocusableButton(
                         onClick = {
-                            if (editingServer == null) {
-                                viewModel.addServer(selectedIp, selectedUser, selectedPass, selectedPaths.toList())
-                            } else {
-                                val updatedServer = editingServer!!.copy(username = selectedUser, password = selectedPass)
-                                viewModel.updateServer(updatedServer)
-                                viewModel.updateServerFolders(updatedServer, selectedPaths.toList())
+                            coroutineScope.launch { // Wrapped in coroutineScope.launch
+                                if (editingServer == null) {
+                                    viewModel.addServer(selectedIp, selectedUser, selectedPass, selectedPaths.toList())
+                                } else {
+                                    val updatedServer = editingServer!!.copy(username = selectedUser, password = selectedPass)
+                                    viewModel.updateServer(updatedServer)
+                                    viewModel.updateServerFolders(updatedServer, selectedPaths.toList())
+                                }
+                                showFolderSelectionDialog = false
                             }
-                            showFolderSelectionDialog = false
                         },
                         text = "确认保存"
                     )
@@ -324,7 +328,12 @@ fun SettingsScreen(viewModel: GalleryViewModel = viewModel()) {
                         modifier = Modifier.weight(1f)
                     )
                     FocusableButton(
-                        onClick = { viewModel.deleteServer(server); showServerDetailsDialog = null }, 
+                        onClick = {
+                            coroutineScope.launch { // Wrapped in coroutineScope.launch
+                                viewModel.deleteServer(server)
+                                showServerDetailsDialog = null
+                            }
+                        },
                         text = "删除",
                         modifier = Modifier.weight(1f),
                         unfocusedContainerColor = Color.Red

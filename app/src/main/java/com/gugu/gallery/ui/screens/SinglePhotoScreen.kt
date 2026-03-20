@@ -201,12 +201,14 @@ fun SinglePhotoScreen(
                                     .focusRequester(rotateButtonFocusRequester)
                                     .onFocusChanged { isRotateFocused = it.isFocused }
                                     .clickable {
-                                        val photo = photos[pagerState.currentPage]
-                                        val currentRotation =
-                                            rotationAngles.getOrPut(photo.id) { photo.rotationDegrees }
-                                        val newRotation = (currentRotation + 90) % 360
-                                        rotationAngles[photo.id] = newRotation
-                                        viewModel.updatePhotoRotation(photo.id, newRotation)
+                                        coroutineScope.launch { // Wrapped in coroutineScope.launch
+                                            val photo = photos[pagerState.currentPage]
+                                            val currentRotation =
+                                                rotationAngles.getOrPut(photo.id) { photo.rotationDegrees }
+                                            val newRotation = (currentRotation + 90) % 360
+                                            rotationAngles[photo.id] = newRotation
+                                            viewModel.updatePhotoRotation(photo.id, newRotation)
+                                        }
                                     }
                                     .onKeyEvent {
                                         if (it.type != KeyEventType.KeyUp) return@onKeyEvent false

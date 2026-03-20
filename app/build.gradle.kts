@@ -35,7 +35,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -104,4 +104,8 @@ dependencies {
 
     // ExifInterface for image metadata
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+
+    // WorkManager for background indexing
+    val work_version = "2.10.0"
+    implementation("androidx.work:work-runtime-ktx:$work_version")
 }

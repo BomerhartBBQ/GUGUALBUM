@@ -24,6 +24,12 @@ import java.io.FileOutputStream
 import java.util.Locale
 import jcifs.context.SingletonContext
 import jcifs.smb.NtlmPasswordAuthenticator
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.ExistingWorkPolicy
+import com.gugu.gallery.network.GalleryIndexingWorker // Corrected import for GalleryIndexingWorker
+import jcifs.context.BaseContext
 
 data class SmbFileItem(
     val name: String,
@@ -34,8 +40,8 @@ data class SmbFileItem(
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
     val db = AppDatabase.getDatabase(application)
     private val dao = db.galleryDao()
-    private val geocoder by lazy { Geocoder(application.applicationContext, Locale.getDefault()) }
-
+    private val workManager = WorkManager.getInstance(application)
+    private val geocoder: Geocoder = Geocoder(application, Locale.getDefault()) // Initialized geocoder
 
     val allServers: Flow<List<ServerEntity>> = dao.getAllServers()
     val allPhotos: Flow<List<PhotoEntity>> = dao.getAllPhotos()
@@ -49,164 +55,37 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val _currentStatus = MutableStateFlow("")
     val currentStatus: StateFlow<String> = _currentStatus
 
-    fun addServer(ip: String, user: String, pass: String, selectedPaths: List<String>) {
+    init {
+        // 观察 WorkManager 任务状态
         viewModelScope.launch {
-            val serverId = dao.insertServer(ServerEntity(ipAddress = ip, name = "NAS ($ip)", username = user, password = pass))
-            selectedPaths.forEach { path ->
-                val name = path.trimEnd('/').substringAfterLast('/')
-                dao.insertFolder(SharedFolderEntity(serverId = serverId, smbPath = path, displayName = name))
+            workManager.getWorkInfosForUniqueWorkFlow("gallery_indexing").collect { workInfos ->
+                val workInfo = workInfos.firstOrNull()
+                if (workInfo != null) {
+                    _isIndexing.value = workInfo.state == WorkInfo.State.RUNNING || workInfo.state == WorkInfo.State.ENQUEUED
+                    
+                    val progress = workInfo.progress.getInt("progress", 0)
+                    val total = workInfo.progress.getInt("total", 0)
+                    val status = workInfo.progress.getString("status") ?: ""
+                    
+                    if (total > 0) {
+                        _progressValue.value = progress.toFloat() / total.toFloat()
+                        _currentStatus.value = "($progress/$total) $status"
+                    } else if (workInfo.state == WorkInfo.State.RUNNING) {
+                        _currentStatus.value = "准备中..."
+                    } else if (workInfo.state == WorkInfo.State.SUCCEEDED) {
+                        _currentStatus.value = "同步完成"
+                        delay(2000); _currentStatus.value = ""
+                    } else if (workInfo.state == WorkInfo.State.FAILED) {
+                        _currentStatus.value = "同步失败"
+                    }
+                }
             }
-        }
-    }
-
-    fun updateServer(server: ServerEntity) {
-        viewModelScope.launch {
-            dao.updateServer(server)
-        }
-    }
-
-    fun updateServerFolders(server: ServerEntity, selectedPaths: List<String>) {
-        viewModelScope.launch {
-            dao.getFoldersForServerOneShot(server.id).forEach { dao.deletePhotosForFolder(it.id) }
-            dao.deleteFoldersForServer(server.id)
-            selectedPaths.forEach { path ->
-                val name = path.trimEnd('/').substringAfterLast('/')
-                dao.insertFolder(SharedFolderEntity(serverId = server.id, smbPath = path, displayName = name))
-            }
-        }
-    }
-    
-    fun deleteServer(server: ServerEntity) {
-        viewModelScope.launch {
-            dao.getFoldersForServerOneShot(server.id).forEach { dao.deletePhotosForFolder(it.id) }
-            dao.deleteFoldersForServer(server.id)
-            dao.deleteServer(server)
-        }
-    }
-
-    fun updatePhotoRotation(photoId: Long, rotationDegrees: Int) {
-        viewModelScope.launch(Dispatchers.IO) {
-            dao.updateRotation(photoId, rotationDegrees)
-        }
-    }
-    
-    suspend fun getSmbFiles(path: String, user: String, pass: String): List<SmbFileItem> = withContext(Dispatchers.IO) {
-        try {
-            SambaScanner.listFiles(path, user, pass).map { SmbFileItem(it.name, it.path, it.isDirectory) }
-        } catch (e: Exception) {
-            emptyList()
         }
     }
 
     fun startIndexing() {
-        if (_isIndexing.value) return
-        
-        viewModelScope.launch(Dispatchers.IO) {
-            _isIndexing.value = true
-            _progressValue.value = 0f
-            try {
-                val servers = dao.getAllServersOneShot()
-                if (servers.isEmpty()) {
-                    _currentStatus.value = "没有已配置的服务器可供索引"
-                    delay(3000)
-                    _currentStatus.value = ""
-                    return@launch
-                }
-
-                _currentStatus.value = "正在扫描所有文件夹..."
-                val allSmbFilesToProcess = mutableListOf<Pair<SharedFolderEntity, SmbFile>>() // 存储 Pair<Folder, File>
-
-                servers.forEach { server ->
-                    val folders = dao.getFoldersForServerOneShot(server.id)
-                    val auth = NtlmPasswordAuthenticator("", server.username, server.password)
-                    val context = SingletonContext.getInstance().withCredentials(auth)
-                    folders.forEach { folder ->
-                        collectFilesRecursive(folder, folder.smbPath, context, allSmbFilesToProcess) // 传递 folder 对象
-                    }
-                }
-
-                val overallTotalCount = allSmbFilesToProcess.size
-                if (overallTotalCount == 0) {
-                    _currentStatus.value = "没有媒体文件可供索引"
-                    delay(3000)
-                    _currentStatus.value = ""
-                    return@launch
-                }
-                
-                _currentStatus.value = "开始处理 $overallTotalCount 个文件..."
-                val allPhotosToInsert = mutableListOf<PhotoEntity>()
-                val BATCH_SIZE = 50 // 每50张图片批量插入一次
-                var processedFilesCount = 0
-
-                allSmbFilesToProcess.forEachIndexed { index, (folder, smbFile) -> // 解构 Pair
-                    try {
-                        if (dao.getPhotoBySmbPath(smbFile.path) == null) {
-                            val photoEntity = processFileAndGenerateEntity(
-                                folder = folder, // 直接使用解构出的 folder
-                                file = smbFile
-                            )
-                            photoEntity?.let { allPhotosToInsert.add(it) }
-                        }
-
-                        processedFilesCount++
-                        _currentStatus.value = "正在处理 ($processedFilesCount/$overallTotalCount): ${smbFile.name}"
-                        _progressValue.value = processedFilesCount.toFloat() / overallTotalCount.toFloat()
-
-                        // 达到批量大小或所有文件处理完毕时插入数据库
-                        if (allPhotosToInsert.size >= BATCH_SIZE || (processedFilesCount == overallTotalCount && allPhotosToInsert.isNotEmpty())) {
-                            dao.insertPhotos(allPhotosToInsert)
-                            allPhotosToInsert.clear()
-                        }
-                    } catch (e: Exception) {
-                        Log.e("GalleryViewModel", "Error processing file ${smbFile.name}: ${e.message}", e)
-                        // 即使处理失败，也更新进度和计数，确保总进度正确
-                        processedFilesCount++
-                        _currentStatus.value = "处理失败 ($processedFilesCount/$overallTotalCount): ${smbFile.name}"
-                        _progressValue.value = processedFilesCount.toFloat() / overallTotalCount.toFloat()
-                    }
-                }
-
-                // 确保最后剩余的也插入数据库
-                if (allPhotosToInsert.isNotEmpty()) {
-                    dao.insertPhotos(allPhotosToInsert)
-                    allPhotosToInsert.clear()
-                }
-
-            } catch (e: Exception) {
-                Log.e("ViewModel", "Indexing failed", e)
-                _currentStatus.value = "索引失败: ${e.message}"
-            } finally {
-                delay(1000)
-                _isIndexing.value = false
-                 if (!_currentStatus.value.contains("失败")) {
-                    _currentStatus.value = "索引完成"
-                    delay(2000)
-                    _currentStatus.value = ""
-                }
-            }
-        }
-    }
-
-    private fun collectFilesRecursive(folder: SharedFolderEntity, path: String, context: jcifs.CIFSContext, results: MutableList<Pair<SharedFolderEntity, SmbFile>>) {
-        try {
-            val dirPath = if (path.endsWith("/")) path else "$path/"
-            val dir = SmbFile(dirPath, context)
-            val files = dir.listFiles() ?: return
-            for (file in files) {
-                try {
-                    if (file.isDirectory) {
-                        collectFilesRecursive(folder, file.path, context, results)
-                    } else {
-                        val name = file.name.lowercase()
-                        if (isMediaFile(name) || isVideoFile(name)) {
-                            results.add(Pair(folder, file)) // 添加 Pair<Folder, File>
-                        }
-                    }
-                } catch (e: Exception) { continue }
-            }
-        } catch (e: Exception) {
-            Log.e("GalleryViewModel", "Error scanning $path", e)
-        }
+        val request = OneTimeWorkRequestBuilder<GalleryIndexingWorker>().build()
+        workManager.enqueueUniqueWork("gallery_indexing", ExistingWorkPolicy.KEEP, request)
     }
 
     private suspend fun processFileAndGenerateEntity(folder: SharedFolderEntity, file: SmbFile): PhotoEntity? {
@@ -330,4 +209,74 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private fun isMediaFile(name: String): Boolean = name.substringAfterLast(".", "").lowercase() in setOf("jpg", "jpeg", "png", "webp")
     private fun isVideoFile(name: String): Boolean = name.substringAfterLast(".", "").lowercase() in setOf("mp4", "mkv", "mov")
     fun getFoldersForServer(serverId: Long): Flow<List<SharedFolderEntity>> = dao.getFoldersForServer(serverId)
+
+    //region Missing methods for SettingsScreen
+
+    suspend fun updateServer(server: ServerEntity) {
+        withContext(Dispatchers.IO) {
+            dao.updateServer(server)
+        }
+    }
+
+    suspend fun deleteServer(server: ServerEntity) {
+        withContext(Dispatchers.IO) {
+            dao.deleteServer(server)
+            // Also delete associated folders and photos
+            dao.deleteFoldersForServer(server.id)
+            dao.deletePhotosForServer(server.id)
+        }
+    }
+
+    suspend fun addServer(ipAddress: String, username: String, password: String, selectedPaths: List<String>) {
+        withContext(Dispatchers.IO) {
+            val newServer = ServerEntity(ipAddress = ipAddress, username = username, password = password, name = ipAddress) // Name defaults to IP for now
+            val serverId = dao.insertServer(newServer)
+            val folders = selectedPaths.map { path ->
+                SharedFolderEntity(serverId = serverId, smbPath = path, displayName = path.substringAfterLast("/").removeSuffix("/").ifEmpty { path })
+            }
+            dao.insertAllFolders(folders)
+        }
+    }
+
+    suspend fun updateServerFolders(server: ServerEntity, selectedPaths: List<String>) {
+        withContext(Dispatchers.IO) {
+            dao.deleteFoldersForServer(server.id) // Clear existing folders
+            val folders = selectedPaths.map { path ->
+                SharedFolderEntity(serverId = server.id, smbPath = path, displayName = path.substringAfterLast("/").removeSuffix("/").ifEmpty { path })
+            }
+            dao.insertAllFolders(folders)
+        }
+    }
+
+    suspend fun getSmbFiles(path: String, username: String, password: String): List<SmbFileItem> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val cifsContext = if (username.isNotBlank()) {
+                    val authenticator = NtlmPasswordAuthenticator(username, password)
+                    SingletonContext.getInstance().withCredentials(authenticator)
+                } else {
+                    SingletonContext.getInstance()
+                }
+                val smbFile = SmbFile(path, cifsContext)
+                smbFile.listFiles()?.filterNotNull()?.map { file ->
+                    SmbFileItem(file.name, file.path, file.isDirectory)
+                } ?: emptyList()
+            } catch (e: Exception) {
+                Log.e("GalleryViewModel", "Error getting SMB files from $path", e)
+                emptyList()
+            }
+        }
+    }
+
+    //endregion
+
+    //region Missing methods for SinglePhotoScreen
+
+    suspend fun updatePhotoRotation(photoId: Long, rotationDegrees: Int) {
+        withContext(Dispatchers.IO) {
+            dao.updateRotation(photoId, rotationDegrees)
+        }
+    }
+
+    //endregion
 }

@@ -38,6 +38,9 @@ interface GalleryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFolder(folder: SharedFolderEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllFolders(folders: List<SharedFolderEntity>) // Added this method
+
     @Query("DELETE FROM shared_folders WHERE serverId = :serverId")
     suspend fun deleteFoldersForServer(serverId: Long)
 
@@ -57,6 +60,9 @@ interface GalleryDao {
     @Query("SELECT * FROM photos WHERE smbPath = :smbPath LIMIT 1")
     suspend fun getPhotoBySmbPath(smbPath: String): PhotoEntity?
 
+    @Query("SELECT smbPath FROM photos")
+    suspend fun getAllPhotoPaths(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPhotos(photos: List<PhotoEntity>)
 
@@ -65,6 +71,9 @@ interface GalleryDao {
 
     @Query("DELETE FROM photos WHERE folderId = :folderId")
     suspend fun deletePhotosForFolder(folderId: Long)
+
+    @Query("DELETE FROM photos WHERE folderId IN (SELECT id FROM shared_folders WHERE serverId = :serverId)") // Added this method
+    suspend fun deletePhotosForServer(serverId: Long)
 
     @Query("DELETE FROM photos WHERE smbPath NOT IN (:currentPaths) AND folderId = :folderId")
     suspend fun deleteMissingPhotos(folderId: Long, currentPaths: List<String>): Unit
