@@ -44,8 +44,8 @@ fun SettingsScreen(viewModel: GalleryViewModel = viewModel()) {
     var showServerDetailsDialog by remember { mutableStateOf<ServerEntity?>(null) }
     
     var selectedIp by remember { mutableStateOf("") }
-    var selectedUser by remember { mutableStateOf("zhou") }
-    var selectedPass by remember { mutableStateOf("wsbbnyaw11") }
+    var selectedUser by remember { mutableStateOf("") }
+    var selectedPass by remember { mutableStateOf("") }
     var editingServer by remember { mutableStateOf<ServerEntity?>(null) }
     var isManualEntry by remember { mutableStateOf(false) }
 
@@ -97,8 +97,8 @@ fun SettingsScreen(viewModel: GalleryViewModel = viewModel()) {
                         onClick = { 
                             editingServer = null 
                             selectedIp = ""
-                            selectedUser = "zhou"
-                            selectedPass = "wsbbnyaw11"
+                            selectedUser = ""
+                            selectedPass = ""
                             isManualEntry = true
                             showAuthDialog = true 
                         },
@@ -165,8 +165,8 @@ fun SettingsScreen(viewModel: GalleryViewModel = viewModel()) {
                                     onClick = {
                                         editingServer = null
                                         selectedIp = ip
-                                        selectedUser = "zhou"
-                                        selectedPass = "wsbbnyaw11"
+                                        selectedUser = ""
+                                        selectedPass = ""
                                         isManualEntry = true 
                                         showScanDialog = false
                                         showAuthDialog = true
