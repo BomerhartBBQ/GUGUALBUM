@@ -1,0 +1,28 @@
+# Gradle files
+.gradle/
+.gradle_home/
+.gradle_tmp/
+build/
+
+# IntelliJ IDEA files
+.idea/
+*.iml
+out/
+
+# Android Studio files
+captures/
+local.properties
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+hs_err_pid*
+
+# Kotlin
+.kotlin/
+
+# Keystores
+*.keystore
+debug.keystore
