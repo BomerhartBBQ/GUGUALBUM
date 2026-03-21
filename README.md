@@ -1,3 +1,6 @@
+下载地址
+https://github.com/BomerhartBBQ/GUGUALBUM/releases/tag/SmartTV 
+
 # 🦉 GuGu Gallery (gugu) - 专为 Android TV 打造的极简相册
 
 [![Android](https://img.shields.io/badge/Android-TV-green.svg)](https://developer.android.com/tv)
