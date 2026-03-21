@@ -121,6 +121,8 @@ GuGuGallery/
 
 本项目采用 [MIT License](LICENSE) 开源。
 
+##[下载地址]([url](https://github.com/BomerhartBBQ/GUGUALBUM/commit/33b2a83540bf59f5e172f7bcf618656d5fb983c4 ))
+
 ---
 
 🎬 *Enjoy your photos on the big screen!*
